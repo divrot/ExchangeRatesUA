@@ -1,83 +1,143 @@
 package com.divrot.exchangeratesua;
 
-import android.app.Activity;
+import android.app.ProgressDialog;
+import android.os.AsyncTask;
 import android.os.Bundle;
-import android.view.View;
-import android.view.View.OnClickListener;
-import android.widget.Button;
-import android.widget.TextView;
+import android.support.v7.app.AppCompatActivity;
+import android.util.Log;
+import android.widget.ListAdapter;
+import android.widget.ListView;
+import android.widget.SimpleAdapter;
+import android.widget.Toast;
 
-import org.w3c.dom.Document;
-import org.w3c.dom.NamedNodeMap;
-import org.w3c.dom.Node;
-import org.w3c.dom.NodeList;
-import org.xml.sax.InputSource;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
-import java.net.URL;
+import java.util.ArrayList;
+import java.util.HashMap;
 
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
+public class MainActivity extends AppCompatActivity {
 
-public class MainActivity extends Activity {
+    private String TAG = MainActivity.class.getSimpleName();
 
-    TextView textViewRates;
-    Button btnRates;
+    private ProgressDialog pDialog;
+    private ListView lv;
 
-    /** Called when the activity is first created. */
+    // URL to get exchangedata from privat JSON
+    private static String url = "https://api.privatbank.ua/p24api/pubinfo?json&exchange&coursid=5";
+
+    ArrayList<HashMap<String, String>> excRatesList;
+
     @Override
-    public void onCreate(Bundle savedInstanceState) {
+    protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        // найдем View-элементы
-        textViewRates = (TextView) findViewById(R.id.textViewRates);
-        btnRates = (Button) findViewById(R.id.buttonRates);
+        excRatesList = new ArrayList<>();
 
-        // создаем обработчик нажатия
-        OnClickListener oCbtnRates = new OnClickListener() {
-            @Override
-            public void onClick(View v) {
+        lv = (ListView) findViewById(R.id.list);
 
-                textViewRates = (TextView) findViewById(R.id.textViewRates);
-                // Меняем текст в TextView (tvOut)
-                try{
- /*
-  определяем URL сервиса
-  готовим API, позволяющий выполнять разбор документа
-  загружаем в парсер полученный ответ и вызываем метод parse
-  */
-                    URL url = new URL("https://privat24.privatbank.ua/p24/accountorder?oper=prp&PUREXML&apicour&country=");
-                    DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-                    DocumentBuilder db = dbf.newDocumentBuilder();
-                    Document doc = db.parse(new InputSource(url.openStream()));
-                    doc.getDocumentElement().normalize();
- /*получаем агрегатный узел с дочерними узлами с атрибутами, хранящими значения валют;
- в ответе всего два узла, мы возьмем первый, а при необходимости тут вполне можно запустить цикл с nodeList.getLength
-*/
-
-                    NodeList nodeList = doc.getElementsByTagName("exchangerate");
-                    Node node = nodeList.item(0);
-                    // опускаемся на узел ниже и получаем список его атрибутов
-                    NamedNodeMap attributes = node.getFirstChild().getAttributes();
-                    //получаем значение атрибут buy
-                    Node currencyAttribEUR  = attributes.getNamedItem("buy");
-                    // ... и его значение
-                    String currencyValueEUR = currencyAttribEUR.getNodeValue();
-
-                    // аналогично поступаем с датой, чтобы иметь представление о актуальности
-                    Node dateCurrency       = attributes.getNamedItem("date");
-                    String dateCurrencyStr  = dateCurrency.getNodeValue();
-                    // и выводим информацию
-                    textViewRates.setText("Курс евро на "+dateCurrencyStr+":"+currencyValueEUR+ "коп");
-
-                }
-                catch (Exception e) {
-                    textViewRates.setText("Не удалось выполнить операцию");
-                }
-            }
-        };
-        btnRates.setOnClickListener(oCbtnRates);
+        new GetExchangeData().execute();
     }
 
-}
+    /**
+     * Async task class to get json by making HTTP call
+     */
+    private class GetExchangeData extends AsyncTask<Void, Void, Void> {
 
+        @Override
+        protected void onPreExecute() {
+            super.onPreExecute();
+            // Showing progress dialog
+            pDialog = new ProgressDialog(MainActivity.this);
+            pDialog.setMessage("Please wait...");
+            pDialog.setCancelable(false);
+            pDialog.show();
+
+        }
+
+        @Override
+        protected Void doInBackground(Void... arg0) {
+            HttpHandler sh = new HttpHandler();
+
+            // Making a request to url and getting response
+            String jsonStr = sh.makeServiceCall(url);
+
+            Log.e(TAG, "Response from url: " + jsonStr);
+
+            if (jsonStr != null) {
+                try {
+                    JSONArray ratesDataArr = new JSONArray(jsonStr);
+
+                    // looping through All Exchange Data
+                    for (int i = 0; i < ratesDataArr.length(); i++) {
+                        JSONObject c = ratesDataArr.getJSONObject(i);
+
+                        String ccy = c.getString("ccy");
+                        String base_ccy = c.getString("base_ccy");
+                        String buy = c.getString("buy");
+                        String sale = c.getString("sale");
+
+                        // tmp hash map for single data
+                        HashMap<String, String> excDataMap = new HashMap<>();
+
+                        // adding each child node to HashMap key => value
+                        excDataMap.put("ccy", ccy);
+                        excDataMap.put("base_ccy", base_ccy);
+                        excDataMap.put("buy", buy);
+                        excDataMap.put("sale", sale);
+
+                        // adding contact to contact list
+                        excRatesList.add(excDataMap);
+                    }
+                } catch (final JSONException e) {
+                    Log.e(TAG, "Json parsing error: " + e.getMessage());
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            Toast.makeText(getApplicationContext(),
+                                    "Json parsing error: " + e.getMessage(),
+                                    Toast.LENGTH_LONG)
+                                    .show();
+                        }
+                    });
+
+                }
+            } else {
+                Log.e(TAG, "Couldn't get json from server.");
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        Toast.makeText(getApplicationContext(),
+                                "Couldn't get json from server. Check LogCat for possible errors!",
+                                Toast.LENGTH_LONG)
+                                .show();
+                    }
+                });
+
+            }
+
+            return null;
+        }
+
+        @Override
+        protected void onPostExecute(Void result) {
+            super.onPostExecute(result);
+            // Dismiss the progress dialog
+            if (pDialog.isShowing())
+                pDialog.dismiss();
+            /**
+             * Updating parsed JSON data into ListView
+             * */
+            ListAdapter adapter = new SimpleAdapter(
+                    MainActivity.this, excRatesList,
+                    R.layout.list_item, new String[]{"ccy", "base_ccy",
+                    "buy", "sale"}, new int[]{R.id.ccy,
+                    R.id.base_ccy, R.id.buy, R.id.sale});
+
+            lv.setAdapter(adapter);
+        }
+
+    }
+}
